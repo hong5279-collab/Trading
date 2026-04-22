@@ -3,6 +3,10 @@ from typing import Any, List, Optional, Tuple
 from src.models import ElliottDecision
 
 
+def _in_band(value: float, low: float, high: float) -> bool:
+    return low <= value <= high
+
+
 def _sma(values: List[float], window: int) -> float:
     if len(values) < window:
         return float(values[-1])
@@ -116,14 +120,90 @@ def _bearish_decision_from_prices(settings: Any, prices: List[float], last_close
     )
 
 
+def _bullish_abc_correction_decision(
+    settings: Any, prices: List[float], last_close: float, trend: float
+) -> Optional[ElliottDecision]:
+    # Bullish continuation model after an up impulse:
+    # H(5) -> L(A) -> H(B) -> L(C), then look for continuation up.
+    h0, l_a, h_b, l_c = prices
+    a = h0 - l_a
+    b = h_b - l_a
+    c = h_b - l_c
+    if a <= 0 or c <= 0:
+        return None
+    b_retrace = b / max(a, 1e-9)
+    c_ext = c / max(a, 1e-9)
+
+    if not (
+        h0 > h_b
+        and l_a < h_b
+        and l_c <= h_b
+        and _in_band(b_retrace, 0.30, 0.90)
+        and _in_band(c_ext, 0.618, 1.618)
+        and last_close > trend
+    ):
+        return None
+
+    buffered_stop = l_c * (1 - settings.ew_sl_buffer_pct)
+    return ElliottDecision(
+        signal="BUY",
+        reason="bullish ABC correction complete (continuation setup)",
+        confidence="medium",
+        bias="bullish",
+        entry_price=h_b,
+        invalidation_price=l_c,
+        stop_loss=buffered_stop,
+        take_profit_1=l_c + (settings.ew_tp1_wave_mult * a),
+        take_profit_2=l_c + (settings.ew_tp2_wave_mult * a),
+    )
+
+
+def _bearish_abc_correction_decision(
+    settings: Any, prices: List[float], last_close: float, trend: float
+) -> Optional[ElliottDecision]:
+    # Bearish continuation model after a down impulse:
+    # L(5) -> H(A) -> L(B) -> H(C), then look for continuation down.
+    l0, h_a, l_b, h_c = prices
+    a = h_a - l0
+    b = h_a - l_b
+    c = h_c - l_b
+    if a <= 0 or c <= 0:
+        return None
+    b_retrace = b / max(a, 1e-9)
+    c_ext = c / max(a, 1e-9)
+
+    if not (
+        l0 < l_b
+        and h_a > l_b
+        and h_c >= l_b
+        and _in_band(b_retrace, 0.30, 0.90)
+        and _in_band(c_ext, 0.618, 1.618)
+        and last_close < trend
+    ):
+        return None
+
+    return ElliottDecision(
+        signal="SELL",
+        reason="bearish ABC correction complete (continuation setup)",
+        confidence="medium",
+        bias="bearish",
+        entry_price=l_b,
+        invalidation_price=h_c,
+        stop_loss=h_c,
+        take_profit_1=h_c - (settings.ew_tp1_wave_mult * a),
+        take_profit_2=h_c - (settings.ew_tp2_wave_mult * a),
+    )
+
+
 def elliott_decision(settings: Any, highs: List[float], lows: List[float], closes: List[float]) -> ElliottDecision:
     pivots = swing_points(highs, lows, settings.swing_window)
-    if len(pivots) < 5:
+    if len(pivots) < 4:
         return ElliottDecision(signal="HOLD", reason="not enough swing points")
 
     trend = _sma(closes, settings.trend_ma)
     last_close = closes[-1]
-    # Scan all recent 5-pivot windows (newest first), not just the very last one.
+
+    # 1) Scan all recent 5-pivot impulse windows (newest first).
     for start in range(len(pivots) - 5, -1, -1):
         window = pivots[start : start + 5]
         pattern = "".join(p[2] for p in window)
@@ -139,5 +219,21 @@ def elliott_decision(settings: Any, highs: List[float], lows: List[float], close
             if decision is not None:
                 return decision
 
-    last5_pattern = "".join(p[2] for p in pivots[-5:])
-    return ElliottDecision(signal="HOLD", reason=f"no valid Elliott setup (last pattern={last5_pattern})")
+    # 2) Fallback: completed ABC correction windows (4 pivots).
+    for start in range(len(pivots) - 4, -1, -1):
+        window = pivots[start : start + 4]
+        pattern = "".join(p[2] for p in window)
+        prices = [p[1] for p in window]
+
+        if pattern == "HLHL":
+            decision = _bullish_abc_correction_decision(settings, prices, last_close, trend)
+            if decision is not None:
+                return decision
+
+        if pattern == "LHLH":
+            decision = _bearish_abc_correction_decision(settings, prices, last_close, trend)
+            if decision is not None:
+                return decision
+
+    tail5 = "".join(p[2] for p in pivots[-5:]) if len(pivots) >= 5 else "".join(p[2] for p in pivots)
+    return ElliottDecision(signal="HOLD", reason=f"no valid Elliott setup (last pattern={tail5})")

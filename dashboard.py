@@ -148,9 +148,10 @@ def main():
         decision = elliott_decision(settings, highs, lows, closes)
         pivots = swing_points(highs, lows, settings.swing_window)
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns([1, 2.2, 1, 1])
         col1.metric("Signal", decision.signal)
-        col2.metric("Reason", decision.reason)
+        col2.markdown("**Reason**")
+        col2.write(decision.reason)
         col3.metric("Bias", decision.bias)
         col4.metric("Confidence", decision.confidence)
 
