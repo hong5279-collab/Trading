@@ -1,2 +1,4 @@
 moomoo-api>=10.2.6218
 python-dotenv>=1.0.1
+plotly>=5.22.0
+streamlit>=1.36.0

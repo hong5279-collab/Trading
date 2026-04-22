@@ -43,6 +43,24 @@ Keep these until you are confident.
 python app.py
 ```
 
+## 4b) Strategy chart UI
+
+You can visualize how the Elliott strategy applies on a stock chart:
+
+```bash
+streamlit run dashboard.py
+```
+
+In the sidebar:
+- set `Symbol` (example: `US.AAPL` or `US.NVDA`)
+- adjust candle lookback / swing window / trend MA
+- click `Refresh`
+
+The chart overlays:
+- candlesticks + trend MA
+- detected swing highs/lows
+- current strategy levels (Entry, Invalidation, Stop Loss, TP1, TP2)
+
 ## Project structure
 
 - `app.py`: thin entrypoint
