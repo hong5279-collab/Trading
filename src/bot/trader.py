@@ -4,8 +4,8 @@ from typing import Optional
 
 from src.broker.moomoo_client import MoomooGateway
 from src.config import Settings
-from src.models import ElliottDecision
-from src.strategy.elliott import elliott_decision
+from src.models import TradeDecision
+from src.strategy.engine import strategy_decision
 from src.strategy.risk import evaluate_exit, qty_from_usd
 
 
@@ -15,7 +15,7 @@ class TraderBot:
         self.gateway = MoomooGateway(settings)
         self.trade_day = date.today()
         self.trade_count_today = 0
-        self.active_plan: Optional[ElliottDecision] = None
+        self.active_plan: Optional[TradeDecision] = None
 
     def connect(self):
         self.gateway.connect()
@@ -34,7 +34,7 @@ class TraderBot:
         print(
             f"[INFO] symbol={self.s.symbol}, env={self.s.trd_env}, "
             f"dry_run={self.s.dry_run}, poll={self.s.poll_seconds}s, "
-            f"buy_usd={self.s.buy_amount_usd}, long_only=True, "
+            f"buy_usd={self.s.buy_amount_usd}, long_only=True, strategy={self.s.strategy_mode}, "
             f"tp={self.s.take_profit_pct:.2%}, sl={self.s.stop_loss_pct:.2%}, "
             f"max_pos_usd={self.s.max_position_usd}"
         )
@@ -43,7 +43,7 @@ class TraderBot:
             self._reset_trade_day_if_needed()
             try:
                 highs, lows, closes = self.gateway.get_recent_ohlc()
-                decision = elliott_decision(self.s, highs, lows, closes)
+                decision = strategy_decision(self.s, highs, lows, closes)
                 signal = decision.signal
                 signal_reason = decision.reason
 
@@ -72,7 +72,7 @@ class TraderBot:
                     signal_reason = "bearish setup ignored (long-only mode)"
 
                 tick_msg = (
-                    f"[TICK] signal={signal} price={price:.4f} "
+                    f"[TICK] strategy={decision.strategy_name} signal={signal} price={price:.4f} "
                     f"position={position_qty} open_orders={has_open} "
                     f"position_value={position_value:.2f} trades_today={self.trade_count_today} "
                     f"reason={signal_reason} confidence={decision.confidence} bias={decision.bias}"
@@ -123,7 +123,7 @@ class TraderBot:
                         self.trade_count_today += 1
 
                 elif signal == "SELL":
-                    if signal_reason in {"take-profit hit", "stop-loss hit"}:
+                    if signal_reason in {"take-profit 1 hit", "take-profit 2 hit", "stop-loss hit"}:
                         sell_qty = int(position_qty)
                     else:
                         print(f"[INFO] Ignore SELL signal in long-only mode: reason={signal_reason}")

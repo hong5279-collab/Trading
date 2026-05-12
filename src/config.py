@@ -19,6 +19,7 @@ class Settings:
     security_firm: ft.SecurityFirm
     symbol: str
     ktype: ft.KLType
+    strategy_mode: str
     ew_lookback: int
     swing_window: int
     trend_ma: int
@@ -30,6 +31,16 @@ class Settings:
     ew_tp1_wave_mult: float
     ew_tp2_wave_mult: float
     ew_sl_buffer_pct: float
+    trend_fast_ma: int
+    trend_slow_ma: int
+    trend_breakout_lookback: int
+    trend_momentum_lookback: int
+    trend_min_momentum_pct: float
+    trend_atr_window: int
+    trend_atr_stop_mult: float
+    trend_min_atr_pct: float
+    trend_tp1_r: float
+    trend_tp2_r: float
     poll_seconds: int
     trd_env: ft.TrdEnv
     trade_password: str
@@ -92,7 +103,11 @@ class Settings:
         if ktype_key not in ktype_map:
             raise ValueError(f"Unsupported KTYPE: {ktype_key}")
 
-        ew_lookback = max(30, int(os.getenv("EW_LOOKBACK", "240")))
+        strategy_mode = os.getenv("STRATEGY_MODE", "ELLIOTT").strip().upper()
+        if strategy_mode not in {"ELLIOTT", "TREND_MOMENTUM"}:
+            raise ValueError("STRATEGY_MODE must be ELLIOTT or TREND_MOMENTUM")
+
+        ew_lookback = max(30, int(os.getenv("EW_LOOKBACK", os.getenv("EW_LSOOKBACK", "240"))))
         swing_window = max(1, int(os.getenv("SWING_WINDOW", "5")))
         trend_ma = max(5, int(os.getenv("TREND_MA", "50")))
         min_wave_pct = float(os.getenv("EW_MIN_WAVE_PCT", "0.007"))
@@ -103,6 +118,16 @@ class Settings:
         ew_tp1_wave_mult = float(os.getenv("EW_TP1_WAVE_MULT", "1.618"))
         ew_tp2_wave_mult = float(os.getenv("EW_TP2_WAVE_MULT", "2.618"))
         ew_sl_buffer_pct = float(os.getenv("EW_SL_BUFFER_PCT", "0.01"))
+        trend_fast_ma = max(2, int(os.getenv("TREND_FAST_MA", "20")))
+        trend_slow_ma = max(3, int(os.getenv("TREND_SLOW_MA", "50")))
+        trend_breakout_lookback = max(5, int(os.getenv("TREND_BREAKOUT_LOOKBACK", "20")))
+        trend_momentum_lookback = max(5, int(os.getenv("TREND_MOMENTUM_LOOKBACK", "20")))
+        trend_min_momentum_pct = float(os.getenv("TREND_MIN_MOMENTUM_PCT", "0.005"))
+        trend_atr_window = max(2, int(os.getenv("TREND_ATR_WINDOW", "14")))
+        trend_atr_stop_mult = float(os.getenv("TREND_ATR_STOP_MULT", "2.0"))
+        trend_min_atr_pct = float(os.getenv("TREND_MIN_ATR_PCT", "0.002"))
+        trend_tp1_r = float(os.getenv("TREND_TP1_R", "1.5"))
+        trend_tp2_r = float(os.getenv("TREND_TP2_R", "3.0"))
         take_profit_pct = float(os.getenv("TAKE_PROFIT_PCT", "0.03"))
         stop_loss_pct = float(os.getenv("STOP_LOSS_PCT", "0.015"))
         if take_profit_pct <= 0 or stop_loss_pct <= 0:
@@ -117,6 +142,16 @@ class Settings:
             raise ValueError("Require 0 < EW_TP1_WAVE_MULT < EW_TP2_WAVE_MULT")
         if not (0 <= ew_sl_buffer_pct < 0.20):
             raise ValueError("Require 0 <= EW_SL_BUFFER_PCT < 0.20")
+        if trend_fast_ma >= trend_slow_ma:
+            raise ValueError("TREND_FAST_MA must be smaller than TREND_SLOW_MA")
+        if trend_min_momentum_pct < 0:
+            raise ValueError("TREND_MIN_MOMENTUM_PCT must be >= 0")
+        if trend_atr_stop_mult <= 0:
+            raise ValueError("TREND_ATR_STOP_MULT must be > 0")
+        if trend_min_atr_pct < 0:
+            raise ValueError("TREND_MIN_ATR_PCT must be >= 0")
+        if not (0 < trend_tp1_r < trend_tp2_r):
+            raise ValueError("Require 0 < TREND_TP1_R < TREND_TP2_R")
 
         return cls(
             host=os.getenv("MOOMOO_HOST", "127.0.0.1"),
@@ -125,6 +160,7 @@ class Settings:
             security_firm=firm_map[firm_key],
             symbol=os.getenv("SYMBOL", "US.AAPL"),
             ktype=ktype_map[ktype_key],
+            strategy_mode=strategy_mode,
             ew_lookback=ew_lookback,
             swing_window=swing_window,
             trend_ma=trend_ma,
@@ -136,6 +172,16 @@ class Settings:
             ew_tp1_wave_mult=ew_tp1_wave_mult,
             ew_tp2_wave_mult=ew_tp2_wave_mult,
             ew_sl_buffer_pct=ew_sl_buffer_pct,
+            trend_fast_ma=trend_fast_ma,
+            trend_slow_ma=trend_slow_ma,
+            trend_breakout_lookback=trend_breakout_lookback,
+            trend_momentum_lookback=trend_momentum_lookback,
+            trend_min_momentum_pct=trend_min_momentum_pct,
+            trend_atr_window=trend_atr_window,
+            trend_atr_stop_mult=trend_atr_stop_mult,
+            trend_min_atr_pct=trend_min_atr_pct,
+            trend_tp1_r=trend_tp1_r,
+            trend_tp2_r=trend_tp2_r,
             poll_seconds=max(5, int(os.getenv("POLL_SECONDS", "30"))),
             trd_env=env_map[env_key],
             trade_password=os.getenv("TRADE_PASSWORD", ""),
