@@ -7,7 +7,9 @@ import pandas as pd
 import streamlit as st
 
 from src.config import Settings
-from src.strategy.elliott import elliott_decision, swing_points
+from src.strategy.backtest import backtest_strategy
+from src.strategy.engine import strategy_decision
+from src.strategy.elliott import swing_points
 
 
 def _check_ret(op_name: str, *result):
@@ -103,15 +105,20 @@ def _fetch_best_candles(quote_ctx: ft.OpenQuoteContext, symbol: str, ktype: ft.K
 
 
 def main():
-    st.set_page_config(page_title="Elliott Strategy Chart", layout="wide")
-    st.title("Elliott Strategy Visualizer")
-    st.caption("See how the current strategy logic applies to a stock on the latest candles.")
+    st.set_page_config(page_title="Trading Strategy Chart", layout="wide")
+    st.title("Trading Strategy Visualizer")
+    st.caption("Compare the current Elliott model against a trend-momentum breakout model on the latest candles.")
 
     settings = Settings.from_env()
 
     with st.sidebar:
         st.subheader("Inputs")
         symbol = st.text_input("Symbol", value=settings.symbol).strip() or settings.symbol
+        strategy_mode = st.selectbox(
+            "Strategy",
+            options=["ELLIOTT", "TREND_MOMENTUM"],
+            index=0 if settings.strategy_mode == "ELLIOTT" else 1,
+        )
         ew_lookback = st.slider("Candles (lookback)", min_value=60, max_value=1000, value=settings.ew_lookback, step=10)
         swing_window = st.slider("Swing window", min_value=1, max_value=15, value=settings.swing_window, step=1)
         trend_ma = st.slider("Trend MA", min_value=5, max_value=200, value=settings.trend_ma, step=1)
@@ -119,6 +126,7 @@ def main():
         st.caption(f"Host: {settings.host}:{settings.port}")
 
     settings.symbol = symbol
+    settings.strategy_mode = strategy_mode
     settings.ew_lookback = ew_lookback
     settings.swing_window = swing_window
     settings.trend_ma = trend_ma
@@ -145,15 +153,20 @@ def main():
         highs = k_df["high"].tolist()
         lows = k_df["low"].tolist()
         closes = k_df["close"].tolist()
-        decision = elliott_decision(settings, highs, lows, closes)
+        decision = strategy_decision(settings, highs, lows, closes)
         pivots = swing_points(highs, lows, settings.swing_window)
+        comparison_rows = [
+            backtest_strategy(settings, highs, lows, closes, "ELLIOTT"),
+            backtest_strategy(settings, highs, lows, closes, "TREND_MOMENTUM"),
+        ]
 
-        col1, col2, col3, col4 = st.columns([1, 2.2, 1, 1])
+        col1, col2, col3, col4, col5 = st.columns([1, 1.4, 2.2, 1, 1])
         col1.metric("Signal", decision.signal)
-        col2.markdown("**Reason**")
-        col2.write(decision.reason)
-        col3.metric("Bias", decision.bias)
-        col4.metric("Confidence", decision.confidence)
+        col2.metric("Strategy", settings.strategy_mode)
+        col3.markdown("**Reason**")
+        col3.write(decision.reason)
+        col4.metric("Bias", decision.bias)
+        col5.metric("Confidence", decision.confidence)
 
         fig = go.Figure(
             data=[
@@ -216,10 +229,27 @@ def main():
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        st.subheader("Recent Strategy Comparison")
+        comparison_df = pd.DataFrame(comparison_rows).sort_values(
+            by=["total_return_pct", "win_rate_pct", "trades"],
+            ascending=[False, False, False],
+        )
+        st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+        winner = comparison_df.iloc[0]
+        if int(winner["trades"]) > 0:
+            st.caption(
+                f"Recent sample leader: {winner['strategy']} "
+                f"(return {winner['total_return_pct']}%, win rate {winner['win_rate_pct']}%, trades {winner['trades']}). "
+                "Use this only as a quick local check, not as proof of future edge."
+            )
+        else:
+            st.caption("No completed trades were found in the current candle sample for either strategy.")
+
         last_candle = k_df["time_key"].max()
         st.caption(
             f"Loaded {len(k_df)} candles. K-type: {settings.ktype}. "
-            f"Symbol: {settings.symbol}. Last candle: {last_candle}. Source: {feed_source}."
+            f"Symbol: {settings.symbol}. Last candle: {last_candle}. "
+            f"Selected strategy: {settings.strategy_mode}. Source: {feed_source}."
         )
         try:
             snap = _check_ret("get_market_snapshot", *quote_ctx.get_market_snapshot([settings.symbol]))

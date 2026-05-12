@@ -5,10 +5,13 @@ This is a safe starter app for automated trading with moomoo OpenAPI.
 It includes:
 - moomoo OpenD connection
 - account auto-selection
-- Elliott Wave-style swing entry/exit signal (long-only)
+- selectable strategy engine:
+  - Elliott Wave-style swing entry/exit signal
+  - trend-momentum breakout with MA, momentum, and ATR risk filters
 - dollar-based order sizing for entries (BUY by USD amount)
 - automatic take-profit / stop-loss sell rules
 - risk guardrails (max position, daily trade cap, dry-run, simulate mode)
+- dashboard comparison of recent strategy performance on fetched candles
 
 ## 1) Prerequisites
 
@@ -60,6 +63,7 @@ The chart overlays:
 - candlesticks + trend MA
 - detected swing highs/lows
 - current strategy levels (Entry, Invalidation, Stop Loss, TP1, TP2)
+- a recent backtest summary for `ELLIOTT` and `TREND_MOMENTUM`
 
 ## Project structure
 
@@ -67,6 +71,9 @@ The chart overlays:
 - `src/config.py`: environment and settings loading
 - `src/broker/moomoo_client.py`: moomoo/OpenD connectivity and order APIs
 - `src/strategy/elliott.py`: Elliott wave signal engine
+- `src/strategy/trend_momentum.py`: breakout + momentum strategy engine
+- `src/strategy/engine.py`: strategy selection router
+- `src/strategy/backtest.py`: recent-candle comparison helper for the dashboard
 - `src/strategy/risk.py`: sizing and TP/SL exit helpers
 - `src/bot/trader.py`: trading loop orchestration
 - `src/models.py`: shared dataclasses
@@ -74,9 +81,9 @@ The chart overlays:
 ## 5) How it works
 
 - Every `POLL_SECONDS`, it fetches recent candles via `request_history_kline`.
-- Detects swing highs/lows and tries to match a basic Elliott Wave impulse structure:
-  - bullish setup (`LHLHL`) -> BUY
-  - bearish setup (`HLHLH`) -> ignored in long-only mode
+- It evaluates the selected `STRATEGY_MODE`:
+  - `ELLIOTT`: swing-pivot impulse / ABC continuation logic
+  - `TREND_MOMENTUM`: breakout above recent highs with MA trend, momentum, and ATR filters
 - Uses structured Elliott decision fields:
   - `entry_price` trigger (breakout confirmation)
   - `invalidation_price` and `stop_loss`
@@ -89,6 +96,12 @@ The chart overlays:
   - trend filter with `TREND_MA`
   - minimum wave size with `EW_MIN_WAVE_PCT`
   - retracement bounds using `EW_WAVE2_*` and `EW_WAVE4_*`
+- The trend strategy adds:
+  - `TREND_FAST_MA` / `TREND_SLOW_MA`
+  - `TREND_BREAKOUT_LOOKBACK`
+  - `TREND_MOMENTUM_LOOKBACK` and `TREND_MIN_MOMENTUM_PCT`
+  - `TREND_ATR_WINDOW`, `TREND_ATR_STOP_MULT`, and `TREND_MIN_ATR_PCT`
+  - `TREND_TP1_R` / `TREND_TP2_R` risk-reward targets
 - Position size is converted from USD to shares at runtime:
   - `BUY_AMOUNT_USD / price` -> buy quantity
 - `SELL` orders are used only to exit existing long positions (TP/SL)
@@ -108,6 +121,7 @@ Orders are submitted as limit (`OrderType.NORMAL`) at current snapshot last pric
 ## 6) Tuning knobs
 
 - `EW_LOOKBACK`: candles inspected for swing detection (higher = slower but cleaner)
+- `STRATEGY_MODE`: choose `ELLIOTT` or `TREND_MOMENTUM`
 - `SWING_WINDOW`: pivot sensitivity (higher = fewer pivots/signals)
 - `TREND_MA`: trend filter moving average window
 - `EW_MIN_WAVE_PCT`: minimum wave-1 size as a fraction of price (filters tiny moves)
@@ -116,7 +130,17 @@ Orders are submitted as limit (`OrderType.NORMAL`) at current snapshot last pric
 - `EW_TP1_WAVE_MULT`: first Elliott TP extension multiplier (wider default: `1.618`)
 - `EW_TP2_WAVE_MULT`: second Elliott TP extension multiplier (wider default: `2.618`)
 - `EW_SL_BUFFER_PCT`: extra stop buffer below invalidation `l4` (default: `0.01`)
+- `TREND_FAST_MA` / `TREND_SLOW_MA`: moving average trend filter for the trend strategy
+- `TREND_BREAKOUT_LOOKBACK`: breakout channel length
+- `TREND_MOMENTUM_LOOKBACK`: return lookback used for momentum confirmation
+- `TREND_MIN_MOMENTUM_PCT`: minimum return threshold for a breakout trade
+- `TREND_ATR_WINDOW`: ATR volatility window
+- `TREND_ATR_STOP_MULT`: ATR-based stop distance multiplier
+- `TREND_MIN_ATR_PCT`: minimum ATR/price ratio required before taking a trend trade
+- `TREND_TP1_R` / `TREND_TP2_R`: take-profit levels in multiples of initial risk
 - `MAX_POSITION_USD`: hard cap on total position market value
+
+There is no universal "best" strategy. In this starter app, `TREND_MOMENTUM` is meant to be the more evidence-backed default candidate to test first, while `ELLIOTT` remains available when you want more structure-based entries.
 
 ## 7) Live trading warning
 
