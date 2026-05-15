@@ -122,6 +122,20 @@ def main():
         ew_lookback = st.slider("Candles (lookback)", min_value=60, max_value=1000, value=settings.ew_lookback, step=10)
         swing_window = st.slider("Swing window", min_value=1, max_value=15, value=settings.swing_window, step=1)
         trend_ma = st.slider("Trend MA", min_value=5, max_value=200, value=settings.trend_ma, step=1)
+        ew_max_setup_age_bars = st.slider(
+            "EW max setup age",
+            min_value=5,
+            max_value=120,
+            value=settings.ew_max_setup_age_bars,
+            step=1,
+        )
+        ew_max_entry_risk_multiple = st.slider(
+            "EW max late entry R",
+            min_value=0.0,
+            max_value=3.0,
+            value=settings.ew_max_entry_risk_multiple,
+            step=0.05,
+        )
         refresh = st.button("Refresh")
         st.caption(f"Host: {settings.host}:{settings.port}")
 
@@ -130,6 +144,8 @@ def main():
     settings.ew_lookback = ew_lookback
     settings.swing_window = swing_window
     settings.trend_ma = trend_ma
+    settings.ew_max_setup_age_bars = ew_max_setup_age_bars
+    settings.ew_max_entry_risk_multiple = ew_max_entry_risk_multiple
 
     if not refresh:
         st.info("Click `Refresh` to fetch latest candles and re-evaluate strategy.")
