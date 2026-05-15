@@ -31,6 +31,8 @@ class Settings:
     ew_tp1_wave_mult: float
     ew_tp2_wave_mult: float
     ew_sl_buffer_pct: float
+    ew_max_setup_age_bars: int
+    ew_max_entry_risk_multiple: float
     trend_fast_ma: int
     trend_slow_ma: int
     trend_breakout_lookback: int
@@ -118,6 +120,8 @@ class Settings:
         ew_tp1_wave_mult = float(os.getenv("EW_TP1_WAVE_MULT", "1.618"))
         ew_tp2_wave_mult = float(os.getenv("EW_TP2_WAVE_MULT", "2.618"))
         ew_sl_buffer_pct = float(os.getenv("EW_SL_BUFFER_PCT", "0.01"))
+        ew_max_setup_age_bars = max(1, int(os.getenv("EW_MAX_SETUP_AGE_BARS", "48")))
+        ew_max_entry_risk_multiple = float(os.getenv("EW_MAX_ENTRY_RISK_MULTIPLE", "0.75"))
         trend_fast_ma = max(2, int(os.getenv("TREND_FAST_MA", "20")))
         trend_slow_ma = max(3, int(os.getenv("TREND_SLOW_MA", "50")))
         trend_breakout_lookback = max(5, int(os.getenv("TREND_BREAKOUT_LOOKBACK", "20")))
@@ -142,6 +146,8 @@ class Settings:
             raise ValueError("Require 0 < EW_TP1_WAVE_MULT < EW_TP2_WAVE_MULT")
         if not (0 <= ew_sl_buffer_pct < 0.20):
             raise ValueError("Require 0 <= EW_SL_BUFFER_PCT < 0.20")
+        if ew_max_entry_risk_multiple < 0:
+            raise ValueError("EW_MAX_ENTRY_RISK_MULTIPLE must be >= 0")
         if trend_fast_ma >= trend_slow_ma:
             raise ValueError("TREND_FAST_MA must be smaller than TREND_SLOW_MA")
         if trend_min_momentum_pct < 0:
@@ -172,6 +178,8 @@ class Settings:
             ew_tp1_wave_mult=ew_tp1_wave_mult,
             ew_tp2_wave_mult=ew_tp2_wave_mult,
             ew_sl_buffer_pct=ew_sl_buffer_pct,
+            ew_max_setup_age_bars=ew_max_setup_age_bars,
+            ew_max_entry_risk_multiple=ew_max_entry_risk_multiple,
             trend_fast_ma=trend_fast_ma,
             trend_slow_ma=trend_slow_ma,
             trend_breakout_lookback=trend_breakout_lookback,

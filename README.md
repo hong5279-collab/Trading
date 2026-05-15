@@ -130,6 +130,8 @@ Orders are submitted as limit (`OrderType.NORMAL`) at current snapshot last pric
 - `EW_TP1_WAVE_MULT`: first Elliott TP extension multiplier (wider default: `1.618`)
 - `EW_TP2_WAVE_MULT`: second Elliott TP extension multiplier (wider default: `2.618`)
 - `EW_SL_BUFFER_PCT`: extra stop buffer below invalidation `l4` (default: `0.01`)
+- `EW_MAX_SETUP_AGE_BARS`: expires old Elliott setups after the last pivot is too far behind current price
+- `EW_MAX_ENTRY_RISK_MULTIPLE`: rejects late Elliott entries after price has moved too far beyond the trigger
 - `TREND_FAST_MA` / `TREND_SLOW_MA`: moving average trend filter for the trend strategy
 - `TREND_BREAKOUT_LOOKBACK`: breakout channel length
 - `TREND_MOMENTUM_LOOKBACK`: return lookback used for momentum confirmation

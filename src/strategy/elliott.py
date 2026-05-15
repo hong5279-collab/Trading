@@ -13,6 +13,38 @@ def _sma(values: List[float], window: int) -> float:
     return float(sum(values[-window:]) / window)
 
 
+def _actionable_rejection_reason(
+    settings: Any,
+    decision: ElliottDecision,
+    last_close: float,
+    current_index: int,
+    last_pivot_index: int,
+) -> Optional[str]:
+    max_age = getattr(settings, "ew_max_setup_age_bars", 48)
+    age = current_index - last_pivot_index
+    if age > max_age:
+        return f"setup expired: last Elliott pivot was {age} bars ago"
+
+    max_entry_r = getattr(settings, "ew_max_entry_risk_multiple", 0.75)
+    if decision.signal == "BUY":
+        if decision.take_profit_1 is not None and last_close >= decision.take_profit_1:
+            return "setup already reached TP1"
+        if decision.entry_price is not None and decision.stop_loss is not None:
+            risk = decision.entry_price - decision.stop_loss
+            if risk > 0 and last_close > decision.entry_price + (max_entry_r * risk):
+                return f"late entry: price is more than {max_entry_r:.2f}R above trigger"
+
+    if decision.signal == "SELL":
+        if decision.take_profit_1 is not None and last_close <= decision.take_profit_1:
+            return "setup already reached TP1"
+        if decision.entry_price is not None and decision.stop_loss is not None:
+            risk = decision.stop_loss - decision.entry_price
+            if risk > 0 and last_close < decision.entry_price - (max_entry_r * risk):
+                return f"late entry: price is more than {max_entry_r:.2f}R below trigger"
+
+    return None
+
+
 def swing_points(highs: List[float], lows: List[float], window: int):
     pivots = []
     for i in range(window, len(highs) - window):
@@ -202,6 +234,8 @@ def elliott_decision(settings: Any, highs: List[float], lows: List[float], close
 
     trend = _sma(closes, settings.trend_ma)
     last_close = closes[-1]
+    current_index = len(closes) - 1
+    rejection_reason = None
 
     # 1) Scan all recent 5-pivot impulse windows (newest first).
     for start in range(len(pivots) - 5, -1, -1):
@@ -212,12 +246,18 @@ def elliott_decision(settings: Any, highs: List[float], lows: List[float], close
         if pattern == "LHLHL":
             decision = _bullish_decision_from_prices(settings, prices, last_close, trend)
             if decision is not None:
-                return decision
+                reason = _actionable_rejection_reason(settings, decision, last_close, current_index, window[-1][0])
+                if reason is None:
+                    return decision
+                rejection_reason = rejection_reason or reason
 
         if pattern == "HLHLH":
             decision = _bearish_decision_from_prices(settings, prices, last_close, trend)
             if decision is not None:
-                return decision
+                reason = _actionable_rejection_reason(settings, decision, last_close, current_index, window[-1][0])
+                if reason is None:
+                    return decision
+                rejection_reason = rejection_reason or reason
 
     # 2) Fallback: completed ABC correction windows (4 pivots).
     for start in range(len(pivots) - 4, -1, -1):
@@ -228,12 +268,20 @@ def elliott_decision(settings: Any, highs: List[float], lows: List[float], close
         if pattern == "HLHL":
             decision = _bullish_abc_correction_decision(settings, prices, last_close, trend)
             if decision is not None:
-                return decision
+                reason = _actionable_rejection_reason(settings, decision, last_close, current_index, window[-1][0])
+                if reason is None:
+                    return decision
+                rejection_reason = rejection_reason or reason
 
         if pattern == "LHLH":
             decision = _bearish_abc_correction_decision(settings, prices, last_close, trend)
             if decision is not None:
-                return decision
+                reason = _actionable_rejection_reason(settings, decision, last_close, current_index, window[-1][0])
+                if reason is None:
+                    return decision
+                rejection_reason = rejection_reason or reason
 
     tail5 = "".join(p[2] for p in pivots[-5:]) if len(pivots) >= 5 else "".join(p[2] for p in pivots)
+    if rejection_reason:
+        return ElliottDecision(signal="HOLD", reason=f"no actionable Elliott setup ({rejection_reason}; last pattern={tail5})")
     return ElliottDecision(signal="HOLD", reason=f"no valid Elliott setup (last pattern={tail5})")
