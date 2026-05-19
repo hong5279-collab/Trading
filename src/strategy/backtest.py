@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 
 from src.models import TradeDecision
-from src.strategy.engine import strategy_decision
+from src.strategy.modes import run_strategy_mode
 
 
 def _max_drawdown(equity_curve: List[float]) -> float:
@@ -64,13 +64,14 @@ def backtest_strategy(
                 entry_price = None
                 continue
 
-        decision = strategy_decision(
+        decision = run_strategy_mode(
             settings,
             highs[: idx + 1],
             lows[: idx + 1],
             closes[: idx + 1],
             strategy_mode=strategy_mode,
         )
+        decision.strategy_name = strategy_mode.lower()
         if position is None and decision.signal == "BUY" and decision.entry_price is not None and close >= decision.entry_price:
             position = decision
             entry_price = close

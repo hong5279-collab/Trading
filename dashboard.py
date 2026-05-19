@@ -1,5 +1,10 @@
 import socket
+import re
+import ssl
 from datetime import datetime, timedelta
+from html import unescape
+from typing import Optional
+from urllib.request import Request, urlopen
 
 import moomoo as ft
 import plotly.graph_objects as go
@@ -10,6 +15,10 @@ from src.config import Settings
 from src.strategy.backtest import backtest_strategy
 from src.strategy.engine import strategy_decision
 from src.strategy.elliott import swing_points
+from src.strategy.trend_momentum import _atr, _sma
+
+
+TRENDING_STOCKS_URL = "https://stockanalysis.com/trending/"
 
 
 def _check_ret(op_name: str, *result):
@@ -104,6 +113,189 @@ def _fetch_best_candles(quote_ctx: ft.OpenQuoteContext, symbol: str, ktype: ft.K
     return history_df, "history-stale", stale_days
 
 
+def _clean_html_text(value: str) -> str:
+    value = re.sub(r"<!--.*?-->", "", value, flags=re.S)
+    value = re.sub(r"<[^>]+>", "", value)
+    return re.sub(r"\s+", " ", unescape(value)).strip()
+
+
+@st.cache_data(ttl=600)
+def _fetch_stockanalysis_trending(limit: int = 20):
+    request = Request(
+        TRENDING_STOCKS_URL,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    context = ssl._create_unverified_context()
+    raw_html = urlopen(request, timeout=12, context=context).read().decode("utf-8", "replace")
+
+    updated = "Unknown"
+    updated_match = re.search(r"Updated:\s*(.*?)</div>", raw_html, flags=re.S)
+    if updated_match:
+        updated = _clean_html_text(updated_match.group(1))
+
+    body_match = re.search(r"<tbody>(.*?)</tbody>", raw_html, flags=re.S)
+    if not body_match:
+        return [], updated
+
+    rows = []
+    for row_html in re.findall(r"<tr[^>]*>(.*?)</tr>", body_match.group(1), flags=re.S):
+        cells = [_clean_html_text(cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row_html, flags=re.S)]
+        if len(cells) < 7:
+            continue
+        rows.append(
+            {
+                "rank": int(cells[0]) if cells[0].isdigit() else len(rows) + 1,
+                "symbol": cells[1],
+                "moomoo_symbol": f"US.{cells[1]}",
+                "company": cells[2],
+                "views": cells[3],
+                "market_cap": cells[4],
+                "change_pct": cells[5],
+                "volume": cells[6],
+            }
+        )
+        if len(rows) >= limit:
+            break
+
+    return rows, updated
+
+
+def _score_trending_symbol(settings: Settings, quote_ctx: ft.OpenQuoteContext, row: dict):
+    symbol = row["moomoo_symbol"]
+    need = settings.ew_lookback + 5
+    k_df, feed_source, _ = _fetch_best_candles(quote_ctx, symbol, settings.ktype, need)
+    if len(k_df) < 60:
+        raise RuntimeError(f"not enough candles for {symbol}")
+
+    highs = [float(x) for x in k_df["high"].tolist()]
+    lows = [float(x) for x in k_df["low"].tolist()]
+    closes = [float(x) for x in k_df["close"].tolist()]
+    last_close = closes[-1]
+    breakout = max(highs[-settings.trend_breakout_lookback - 1 : -1])
+    recent_low = min(lows[-settings.trend_breakout_lookback :])
+    momentum_pct = (last_close / closes[-settings.trend_momentum_lookback - 1] - 1) * 100
+    distance_to_breakout_pct = (breakout / max(last_close, 1e-9) - 1) * 100
+    fast_ma = _sma(closes, settings.trend_fast_ma)
+    slow_ma = _sma(closes, settings.trend_slow_ma)
+    atr = _atr(highs, lows, closes, settings.trend_atr_window)
+    atr_pct = atr / max(last_close, 1e-9) * 100
+    trend_decision = strategy_decision(settings, highs, lows, closes, strategy_mode="TREND_MOMENTUM")
+    ew_decision = strategy_decision(settings, highs, lows, closes, strategy_mode="ELLIOTT")
+
+    score = 0.0
+    if trend_decision.signal == "BUY":
+        score += 100.0
+    elif 0 <= distance_to_breakout_pct <= 3:
+        score += 35.0 - (distance_to_breakout_pct * 5.0)
+    elif 3 < distance_to_breakout_pct <= 6:
+        score += 10.0
+    elif distance_to_breakout_pct < 0:
+        score += 20.0
+
+    if fast_ma > slow_ma:
+        score += 20.0
+    else:
+        score -= 20.0
+    if momentum_pct >= settings.trend_min_momentum_pct * 100:
+        score += 20.0
+    if atr_pct >= settings.trend_min_atr_pct * 100:
+        score += 10.0
+    if ew_decision.signal == "BUY":
+        score += 10.0
+    if "setup expired" in ew_decision.reason:
+        score -= 5.0
+
+    if trend_decision.signal == "BUY":
+        action = "BUY signal"
+    elif 0 <= distance_to_breakout_pct <= 3 and fast_ma > slow_ma and momentum_pct >= settings.trend_min_momentum_pct * 100:
+        action = "Watch breakout"
+    elif 0 <= distance_to_breakout_pct <= 6 and fast_ma > slow_ma:
+        action = "Near breakout"
+    else:
+        action = "Skip now"
+
+    return {
+        "symbol": symbol,
+        "company": row["company"],
+        "action": action,
+        "score": round(score, 1),
+        "price": round(last_close, 4),
+        "breakout": round(breakout, 4),
+        "distance_to_breakout_pct": round(distance_to_breakout_pct, 2),
+        "momentum_pct": round(momentum_pct, 2),
+        "atr_pct": round(atr_pct, 2),
+        "recent_low": round(recent_low, 4),
+        "trend_signal": trend_decision.signal,
+        "ew_signal": ew_decision.signal,
+        "source_rank": row["rank"],
+        "source_views": row["views"],
+        "source_change_pct": row["change_pct"],
+        "feed_source": feed_source,
+        "reason": trend_decision.reason,
+    }
+
+
+def _render_trending_ideas(settings: Settings, quote_ctx: Optional[ft.OpenQuoteContext], scan_limit: int):
+    st.subheader("Trending Stock Ideas")
+    try:
+        trending_rows, updated = _fetch_stockanalysis_trending(limit=max(scan_limit, 20))
+    except Exception as exc:
+        st.error(f"Could not load trending stocks: {exc}")
+        return
+
+    if not trending_rows:
+        st.warning("No trending stocks were returned by the source.")
+        return
+
+    st.caption(
+        f"Source: StockAnalysis trending stocks. Updated: {updated}. "
+        "Sorted by pageviews; use as an idea feed only."
+    )
+    source_df = pd.DataFrame(trending_rows[:scan_limit])
+    st.dataframe(
+        source_df[["rank", "moomoo_symbol", "company", "views", "change_pct", "volume"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if quote_ctx is None:
+        st.info("Start moomoo OpenD to score trending names with EW and Momentum rules.")
+        return
+
+    scored_rows = []
+    for row in trending_rows[:scan_limit]:
+        try:
+            scored_rows.append(_score_trending_symbol(settings, quote_ctx, row))
+        except Exception as exc:
+            scored_rows.append(
+                {
+                    "symbol": row["moomoo_symbol"],
+                    "company": row["company"],
+                    "action": "Unavailable",
+                    "score": -999.0,
+                    "reason": str(exc),
+                    "source_rank": row["rank"],
+                    "source_views": row["views"],
+                    "source_change_pct": row["change_pct"],
+                }
+            )
+
+    scored_df = pd.DataFrame(scored_rows).sort_values(
+        by=["score", "source_rank"],
+        ascending=[False, True],
+    )
+    available_df = scored_df[scored_df["score"] > -999.0]
+    if available_df.empty:
+        st.warning("Trending symbols loaded, but none had enough OpenD candle history to score.")
+    else:
+        best = available_df.iloc[0]
+        st.markdown(
+            f"**Top scored idea:** {best['symbol']} - {best['action']} "
+            f"(score {best['score']}, breakout {best.get('breakout', 'N/A')})"
+        )
+    st.dataframe(scored_df, use_container_width=True, hide_index=True)
+
+
 def main():
     st.set_page_config(page_title="Trading Strategy Chart", layout="wide")
     st.title("Trading Strategy Visualizer")
@@ -114,10 +306,11 @@ def main():
     with st.sidebar:
         st.subheader("Inputs")
         symbol = st.text_input("Symbol", value=settings.symbol).strip() or settings.symbol
+        strategy_options = ["AUTO", "ELLIOTT", "TREND_MOMENTUM"]
         strategy_mode = st.selectbox(
             "Strategy",
-            options=["ELLIOTT", "TREND_MOMENTUM"],
-            index=0 if settings.strategy_mode == "ELLIOTT" else 1,
+            options=strategy_options,
+            index=strategy_options.index(settings.strategy_mode) if settings.strategy_mode in strategy_options else 0,
         )
         ew_lookback = st.slider("Candles (lookback)", min_value=60, max_value=1000, value=settings.ew_lookback, step=10)
         swing_window = st.slider("Swing window", min_value=1, max_value=15, value=settings.swing_window, step=1)
@@ -137,6 +330,10 @@ def main():
             step=0.05,
         )
         refresh = st.button("Refresh")
+        st.divider()
+        st.subheader("Trending")
+        trending_scan_limit = st.slider("Trending scan count", min_value=5, max_value=20, value=10, step=1)
+        load_trending = st.button("Load Trending Ideas")
         st.caption(f"Host: {settings.host}:{settings.port}")
 
     settings.symbol = symbol
@@ -147,17 +344,28 @@ def main():
     settings.ew_max_setup_age_bars = ew_max_setup_age_bars
     settings.ew_max_entry_risk_multiple = ew_max_entry_risk_multiple
 
-    if not refresh:
-        st.info("Click `Refresh` to fetch latest candles and re-evaluate strategy.")
+    if not refresh and not load_trending:
+        st.info("Click `Refresh` to fetch latest candles and re-evaluate strategy, or load trending ideas.")
         return
 
-    if not _can_connect_tcp(settings.host, settings.port):
+    opend_available = _can_connect_tcp(settings.host, settings.port)
+    if refresh and not opend_available:
         st.error(f"Cannot connect to OpenD at {settings.host}:{settings.port}. Start OpenD and check `.env` host/port.")
         return
 
     quote_ctx = None
     try:
-        quote_ctx = ft.OpenQuoteContext(host=settings.host, port=settings.port)
+        if opend_available:
+            quote_ctx = ft.OpenQuoteContext(host=settings.host, port=settings.port)
+        if load_trending:
+            _render_trending_ideas(settings, quote_ctx, trending_scan_limit)
+            if not refresh:
+                return
+
+        if quote_ctx is None:
+            st.error(f"Cannot connect to OpenD at {settings.host}:{settings.port}. Start OpenD and check `.env` host/port.")
+            return
+
         need = settings.ew_lookback + 5
         k_df, feed_source, stale_days = _fetch_best_candles(quote_ctx, settings.symbol, settings.ktype, need)
         if len(k_df) < 30:
@@ -175,10 +383,11 @@ def main():
             backtest_strategy(settings, highs, lows, closes, "ELLIOTT"),
             backtest_strategy(settings, highs, lows, closes, "TREND_MOMENTUM"),
         ]
+        active_strategy_label = decision.strategy_name.upper().replace("AUTO->", "AUTO -> ")
 
         col1, col2, col3, col4, col5 = st.columns([1, 1.4, 2.2, 1, 1])
         col1.metric("Signal", decision.signal)
-        col2.metric("Strategy", settings.strategy_mode)
+        col2.metric("Strategy", active_strategy_label)
         col3.markdown("**Reason**")
         col3.write(decision.reason)
         col4.metric("Bias", decision.bias)
@@ -265,7 +474,8 @@ def main():
         st.caption(
             f"Loaded {len(k_df)} candles. K-type: {settings.ktype}. "
             f"Symbol: {settings.symbol}. Last candle: {last_candle}. "
-            f"Selected strategy: {settings.strategy_mode}. Source: {feed_source}."
+            f"Selected mode: {settings.strategy_mode}. Active strategy: {active_strategy_label}. "
+            f"Source: {feed_source}."
         )
         try:
             snap = _check_ret("get_market_snapshot", *quote_ctx.get_market_snapshot([settings.symbol]))

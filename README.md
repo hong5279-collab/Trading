@@ -6,6 +6,7 @@ It includes:
 - moomoo OpenD connection
 - account auto-selection
 - selectable strategy engine:
+  - automatic recent-performance chooser (`AUTO`)
   - Elliott Wave-style swing entry/exit signal
   - trend-momentum breakout with MA, momentum, and ATR risk filters
 - dollar-based order sizing for entries (BUY by USD amount)
@@ -82,6 +83,7 @@ The chart overlays:
 
 - Every `POLL_SECONDS`, it fetches recent candles via `request_history_kline`.
 - It evaluates the selected `STRATEGY_MODE`:
+  - `AUTO`: backtests both built-in strategies on the current candle sample, picks the better recent performer, then executes that strategy for this poll
   - `ELLIOTT`: swing-pivot impulse / ABC continuation logic
   - `TREND_MOMENTUM`: breakout above recent highs with MA trend, momentum, and ATR filters
 - Uses structured Elliott decision fields:
@@ -121,7 +123,7 @@ Orders are submitted as limit (`OrderType.NORMAL`) at current snapshot last pric
 ## 6) Tuning knobs
 
 - `EW_LOOKBACK`: candles inspected for swing detection (higher = slower but cleaner)
-- `STRATEGY_MODE`: choose `ELLIOTT` or `TREND_MOMENTUM`
+- `STRATEGY_MODE`: choose `AUTO`, `ELLIOTT`, or `TREND_MOMENTUM`
 - `SWING_WINDOW`: pivot sensitivity (higher = fewer pivots/signals)
 - `TREND_MA`: trend filter moving average window
 - `EW_MIN_WAVE_PCT`: minimum wave-1 size as a fraction of price (filters tiny moves)
@@ -142,7 +144,7 @@ Orders are submitted as limit (`OrderType.NORMAL`) at current snapshot last pric
 - `TREND_TP1_R` / `TREND_TP2_R`: take-profit levels in multiples of initial risk
 - `MAX_POSITION_USD`: hard cap on total position market value
 
-There is no universal "best" strategy. In this starter app, `TREND_MOMENTUM` is meant to be the more evidence-backed default candidate to test first, while `ELLIOTT` remains available when you want more structure-based entries.
+There is no universal "best" strategy. In this starter app, `AUTO` uses the recent-candle backtest winner between `ELLIOTT` and `TREND_MOMENTUM`, with `TREND_MOMENTUM` used as the tiebreaker. If you want a fixed behavior, you can still pin `STRATEGY_MODE` to either individual strategy.
 
 ## 7) Live trading warning
 
