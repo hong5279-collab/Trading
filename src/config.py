@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 import moomoo as ft
+from src.strategy.modes import SUPPORTED_STRATEGY_MODES
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -106,8 +107,9 @@ class Settings:
             raise ValueError(f"Unsupported KTYPE: {ktype_key}")
 
         strategy_mode = os.getenv("STRATEGY_MODE", "ELLIOTT").strip().upper()
-        if strategy_mode not in {"ELLIOTT", "TREND_MOMENTUM"}:
-            raise ValueError("STRATEGY_MODE must be ELLIOTT or TREND_MOMENTUM")
+        if strategy_mode not in SUPPORTED_STRATEGY_MODES:
+            supported = ", ".join(SUPPORTED_STRATEGY_MODES)
+            raise ValueError(f"STRATEGY_MODE must be one of: {supported}")
 
         ew_lookback = max(30, int(os.getenv("EW_LOOKBACK", os.getenv("EW_LSOOKBACK", "240"))))
         swing_window = max(1, int(os.getenv("SWING_WINDOW", "5")))

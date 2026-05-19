@@ -306,10 +306,11 @@ def main():
     with st.sidebar:
         st.subheader("Inputs")
         symbol = st.text_input("Symbol", value=settings.symbol).strip() or settings.symbol
+        strategy_options = ["AUTO", "ELLIOTT", "TREND_MOMENTUM"]
         strategy_mode = st.selectbox(
             "Strategy",
-            options=["ELLIOTT", "TREND_MOMENTUM"],
-            index=0 if settings.strategy_mode == "ELLIOTT" else 1,
+            options=strategy_options,
+            index=strategy_options.index(settings.strategy_mode) if settings.strategy_mode in strategy_options else 0,
         )
         ew_lookback = st.slider("Candles (lookback)", min_value=60, max_value=1000, value=settings.ew_lookback, step=10)
         swing_window = st.slider("Swing window", min_value=1, max_value=15, value=settings.swing_window, step=1)
@@ -382,10 +383,11 @@ def main():
             backtest_strategy(settings, highs, lows, closes, "ELLIOTT"),
             backtest_strategy(settings, highs, lows, closes, "TREND_MOMENTUM"),
         ]
+        active_strategy_label = decision.strategy_name.upper().replace("AUTO->", "AUTO -> ")
 
         col1, col2, col3, col4, col5 = st.columns([1, 1.4, 2.2, 1, 1])
         col1.metric("Signal", decision.signal)
-        col2.metric("Strategy", settings.strategy_mode)
+        col2.metric("Strategy", active_strategy_label)
         col3.markdown("**Reason**")
         col3.write(decision.reason)
         col4.metric("Bias", decision.bias)
@@ -472,7 +474,8 @@ def main():
         st.caption(
             f"Loaded {len(k_df)} candles. K-type: {settings.ktype}. "
             f"Symbol: {settings.symbol}. Last candle: {last_candle}. "
-            f"Selected strategy: {settings.strategy_mode}. Source: {feed_source}."
+            f"Selected mode: {settings.strategy_mode}. Active strategy: {active_strategy_label}. "
+            f"Source: {feed_source}."
         )
         try:
             snap = _check_ret("get_market_snapshot", *quote_ctx.get_market_snapshot([settings.symbol]))
